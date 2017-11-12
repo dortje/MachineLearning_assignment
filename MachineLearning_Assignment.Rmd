@@ -1,0 +1,116 @@
+---
+title: "Building a classifier for detecting correct weight lifting"
+author: "dortje"
+date: 'null'
+---
+<!-- 
+current_wd <- getwd()
+setwd(file.path(current_wd, "Machine_Learning", "assignment"))
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+-->
+
+## Introduction
+Focusing on investigating how well people do of a particular activity, scientists have collected a data set on weight lifting exercises. This data set contains accelrometer data for different body parts. Six participants have been instructed to do the weight lifting correctly and then do four different kinds of mistakes. For more information on this experiment and the resulting paper, please refer to http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har
+This report aims to build a classifier to predict whether the weight lifting exercise is done correctly or if not which of the four mistakes have been made.
+The folowing classes are to be predicted:
+* Class A - exactly according to the specification (correct)
+* Class B - throwing the elbows to the front (mistake)
+* Class C - lifting the dumbbell only halfway (mistake)
+* Class D - lowering the dumbbell only halfway (mistake)
+* Class E - throwing the hips to the front (mistake)
+
+## Preparing Predictors
+First the data needs to be loaded. It has been downloaded priorly to the current working directory. We will load the training data and also the test data. However the test data set will be put aside until we have decided on our final model. Then we will use that to evaluate out of sample accuracy and error. Since there are a lot of columns with "#DIV/0!" value. Those will be replaced with NA. (If they weren't we would have a lot of factor variables that we would need to take care of.) 
+```{r load_data}
+training <- read.csv("pml-training.csv", na.strings=c("NA", "NaN", " ", "#DIV/0!"))
+testing <- read.csv("pml-testing.csv", na.strings=c("NA", "NaN", " ", "#DIV/0!"))
+dim(training)
+table(training$classe)
+```
+
+We can see that there are 19622 observations in the training data set with 160 variables. The observations are distributed among the classes quite good, only class A has a higher amount of observations compared to the others. We will leave this affect aside for this report.
+
+Now, we check which variables are helpful for prediction. Some columns don't seem to be useful for prediction and are left out. These are: X, user_name, the timestamps and the window columns (column 1 to 7). Also we will check if there are columns that have a high level of missing data. these columns clearly won't be good predictors and are therefore excluded as well.
+
+```{r reduce_columns}
+na_columns <- sapply(training, function(x) sum(is.na(x))/length(x))
+length(na_columns[na_columns < 0.01])
+length(na_columns[na_columns > 0.97])
+col_sel <- names(na_columns[na_columns < 0.01])
+col_sel <- col_sel[8:length(col_sel)]
+training_reduced <- training[,col_sel]
+dim(training_reduced)
+```
+
+There were 100 variables with more than 97% missing values and the remaining variables all have less than 1% missing values. After deleting them along with the unecessary variables, we have 53 variables left.
+
+## Building models with cross validation
+
+First let's set the seed.
+```{r set_seed}
+set.seed(19982)
+```
+
+Since the prediction is about predicting a class, a tree classifier is a solid choice here. Let's start with a normal classification tree using the "rpart" method from the caret package. We will use cross validation to make sure the classifier is trained on multiple traingn sets. The number of k-fold is chosen to be 20. Playing around with this number showed, that a higher number didn't give a better accuracy.
+
+```{r train_rpart, cache=TRUE}
+suppressPackageStartupMessages(library(caret))
+train_control_rpart <- trainControl(method="cv", number=20,  savePredictions=TRUE)
+model_rpart <- train(classe ~ ., method="rpart", trControl=train_control_rpart, data=training_reduced)
+```
+
+Let's have a look at the final model and use confusionMatrix() function to evaluate it:
+
+```{r check_rpart}
+model_rpart$finalModel
+confusionMatrix(model_rpart)
+```
+
+The accuracy for the resulting model is pretty low with a value of only 0.5. That's by far not sufficent enough. Therefor we will try a different approach. We will use random forest as the classifier. We expect this approach to be computationally more expensive. That's why we will tune some parameters. Per default, random forest uses bootstrapping for sampling. We will change that to using cross validation. That should speed up performance. For number of samples, we will use 5 and 10, and then compare the accuracy on the resulting models.
+
+```{r train_rf, cache=TRUE}
+suppressPackageStartupMessages(library(randomForest))
+suppressPackageStartupMessages(library(parallel))
+suppressPackageStartupMessages(library(doParallel))
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+train_control_rf_5 <- trainControl(method="cv", number=5, allowParallel=TRUE, savePredictions=TRUE)
+Sys.time()
+model_rf_5 <- train(classe ~ ., method="rf", trControl=train_control_rf_5, data=training_reduced)
+Sys.time()
+train_control_rf_10 <- trainControl(method="cv", number=10, allowParallel=TRUE, savePredictions=TRUE)
+Sys.time()
+model_rf_10 <- train(classe ~ ., method="rf", trControl=train_control_rf_10, data=training_reduced)
+Sys.time()
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+Let's evaluate the resulting models:
+
+```{r eval_rf_5}
+print(model_rf_5$finalModel)
+confusionMatrix(model_rf_5)
+print(model_rf_10$finalModel)
+confusionMatrix(model_rf_10)
+```
+
+Concerning OOB estimate of error rate and accuracy both models are very good and very close to each other. The 10 k-fold model performs slightly better with a 0.1% higher accuracy and a 0.03% lower OOB estimate. We can also see that in both models the accuracy was the highest with mtry = 2, meaning that the best accuracy was achieved using 2 random variables for each split.
+
+Choosing the model_rf_10, we expect an out of bag error rate of 0.43%.
+
+We can now predict on the testing data set. However, we can't compare with the true values, since they are not present.
+
+```{r test}
+predictions <- predict(model_rf_10, testing)
+table(predictions)
+```
+
+We see, that on the testing data set, most of the observation would be classified as A (weight lifting correctly done) or B (throwing elbows to the front).
+
+## Conclusion
+We were able to train a classification tree with the random forest approach with quite good accuracy and out of bag error estimate. We are quite confident that this model will perform well on the test data set.
