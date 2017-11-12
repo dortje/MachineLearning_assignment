@@ -1,7 +1,6 @@
 ---
 title: "Building a classifier for detecting correct weight lifting"
 author: "dortje"
-date: 'null'
 ---
 <!-- 
 current_wd <- getwd()
@@ -79,13 +78,9 @@ suppressPackageStartupMessages(library(doParallel))
 cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
 registerDoParallel(cluster)
 train_control_rf_5 <- trainControl(method="cv", number=5, allowParallel=TRUE, savePredictions=TRUE)
-Sys.time()
 model_rf_5 <- train(classe ~ ., method="rf", trControl=train_control_rf_5, data=training_reduced)
-Sys.time()
 train_control_rf_10 <- trainControl(method="cv", number=10, allowParallel=TRUE, savePredictions=TRUE)
-Sys.time()
 model_rf_10 <- train(classe ~ ., method="rf", trControl=train_control_rf_10, data=training_reduced)
-Sys.time()
 stopCluster(cluster)
 registerDoSEQ()
 ```
@@ -101,7 +96,22 @@ confusionMatrix(model_rf_10)
 
 Concerning OOB estimate of error rate and accuracy both models are very good and very close to each other. The 10 k-fold model performs slightly better with a 0.1% higher accuracy and a 0.03% lower OOB estimate. We can also see that in both models the accuracy was the highest with mtry = 2, meaning that the best accuracy was achieved using 2 random variables for each split.
 
-Choosing the model_rf_10, we expect an out of bag error rate of 0.43%.
+Let's have a closer look at the error rates for each class and for the OOB:
+
+```{r eval_plot_err}
+plot(model_rf_10$finalModel, log="y")
+legend("topright", colnames(model_rf_10$finalModel$err.rate), col=1:6, fill=1:6, cex=0.5)
+```
+
+The error rates decrease with increasing iterations. After 500 iterations, the error rates are highest for class D with about 0.013 and lowest for class A with about 0.0004. The OOB error rate is about 0.004. This all looks quite good for our model.
+
+Let's also investigate on the variable importance:
+
+```{r eval_plot_varImp}
+varImpPlot(model_rf_10$finalModel)
+```
+
+So, the most important variable seams to be roll_belt, followed by yaw_belt.
 
 We can now predict on the testing data set. However, we can't compare with the true values, since they are not present.
 
@@ -113,4 +123,4 @@ table(predictions)
 We see, that on the testing data set, most of the observation would be classified as A (weight lifting correctly done) or B (throwing elbows to the front).
 
 ## Conclusion
-We were able to train a classification tree with the random forest approach with quite good accuracy and out of bag error estimate. We are quite confident that this model will perform well on the test data set.
+We were able to train a classification tree with the random forest approach with quite good accuracy and out of bag error estimate. We are quite confident that this model will perform well on the test data set, since the OOB estimate is 0.43%.
